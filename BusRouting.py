@@ -11,7 +11,9 @@ import random
 import csv
 from collections import defaultdict
 
-# Existing functions to extract stop info and get trip stops
+import tempfile
+import shutil
+
 def extract_stop_info(csv_file_path):
     stop_info = {}
     name_info = {}
@@ -43,8 +45,8 @@ class RouteManager:
     def __init__(self):
         self.bbox = (77.0, 28.4, 77.4, 28.8)
 
-        self.stops, self.names = extract_stop_info("F:\CollegeStudy\SIH\stops - Copy (3).csv.xls")
-        self.routes = get_trip_stops("F:\CollegeStudy\SIH\stop_times - Copy (2).csv.xls")
+        self.stops, self.names = extract_stop_info("C:/Users/aakas/Downloads/GTFS/stops - Copy (3).csv")
+        self.routes = get_trip_stops("C:/Users/aakas/Downloads/GTFS/stop_times - Copy (2).csv")
 
         my_set = set()
 
@@ -60,6 +62,94 @@ class RouteManager:
 
         self.colors = ['blue', 'green', 'red', 'purple', 'orange', 'brown', 'pink']
         self.map = None  # Initialize the map attribute
+
+
+    def read_csv_a(self, file_path):
+        drivers = []
+        with open(file_path, 'r') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                drivers.append(row)
+        return drivers
+
+    def organize_drivers_by_zone(self, drivers):
+        zone_drivers = defaultdict(list)
+        for driver in drivers:
+            zone_drivers[driver['Zone']].append(driver)
+        return zone_drivers
+
+    def assign_drivers_to_buses(self, zone_drivers, buses):
+        assignments = {}
+        for zone, drivers in zone_drivers.items():
+            if zone in buses:
+                available_buses = buses[zone]
+                for i, driver in enumerate(drivers):
+                    if i < len(available_buses):
+                        bus = available_buses[i]
+                        assignments[driver['Driver ID']] = {
+                            'Driver Name': driver['Driver Name'],
+                            'Bus Assigned': bus,
+                            'Zone': zone
+                        }
+        return assignments
+
+    def categorize_stops(self):
+        buses = {
+            "NE": [],
+            "NW": [],
+            "SE": [],
+            "SW": []
+        }
+        
+        for trip_id, lst in self.routes.items():
+            lat, lon = self.stops[lst[0]]
+            if float(lat) >= 28.6 and float(lon) >= 77.2:
+                buses["NE"].append(trip_id)
+            elif float(lat) >= 28.6 and float(lon) < 77.2:
+                buses["NW"].append(trip_id)
+            elif float(lat) < 28.6 and float(lon) >= 77.2:
+                buses["SE"].append(trip_id)
+            else:  # lat < 0 and lon < 0
+                buses["SW"].append(trip_id)
+        
+        return buses
+
+    def update_driver_assignments(self, csv_file):
+        dri = self.read_csv_a(csv_file)
+        zone_drivers = self.organize_drivers_by_zone(dri)
+        assignments = self.assign_drivers_to_buses(zone_drivers, self.categorize_stops())
+
+        temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, newline='')
+        
+        try:
+            with open(csv_file, 'r') as csvfile, temp_file:
+                reader = csv.DictReader(csvfile)
+                fieldnames = reader.fieldnames
+                
+                writer = csv.DictWriter(temp_file, fieldnames=fieldnames)
+                writer.writeheader()
+
+                print(assignments)
+                
+                for row in reader:
+                    driver_id = row['Driver ID']
+                    if driver_id in assignments:
+                        # Update the Bus Assigned field
+                        row['Bus Assigned'] = assignments[driver_id]['Bus Assigned']
+                        # Update the Zone field if it exists in the assignment
+                        if 'Zone' in assignments[driver_id]:
+                            row['Zone'] = assignments[driver_id]['Zone']
+                    writer.writerow(row)
+            
+            # Replace the original file with the updated temp file
+            shutil.move(temp_file.name, csv_file)
+            print(f"CSV file '{csv_file}' has been successfully updated.")
+        
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            os.unlink(temp_file.name)  # Delete the temp file in case of error
+            print("The original file was not modified.")
+
 
     def filter_delhi_data(self):
         self.stops = {k: v for k, v in self.stops.items() 
@@ -138,6 +228,7 @@ class BusRoutingSystem:
         self.manager = RouteManager()
 
     def run(self):
+        self.manager.update_driver_assignments("C:/Users/aakas/Downloads/driver_details.csv")
         print("Running Bus Routing System...")
         map_path = self.manager.save_map()
         return map_path
@@ -146,7 +237,7 @@ class BusRoutingSystem:
 def home():
     system = BusRoutingSystem()
     map_path = system.run()
-    return render_template('a.html', map_path=map_path)
+    return render_template('index.html', map_path=map_path)
 
 # Route to display the generated map
 @app.route('/map')
